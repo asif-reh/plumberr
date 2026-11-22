@@ -1,0 +1,17 @@
+{
+  "id": "plumberr-hooks",
+  "name": "Plumberr Hooks",
+  "description": "Streams OpenClaw model/tool steps to the Plumberr timeline and enforces the model-turn budget.",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["apiBaseUrl", "apiToken"],
+    "properties": {
+      "apiBaseUrl": { "type": "string" },
+      "apiToken": { "type": "string" },
+      "agentId": { "type": "string", "default": "oncall" },
+      "maxModelTurns": { "type": "integer", "minimum": 2, "maximum": 10, "default": 3 }
+    }
+  }
+}
