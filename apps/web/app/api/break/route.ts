@@ -22,9 +22,15 @@ export async function POST(req: Request) {
     if (!result.success) return NextResponse.json({ error: "captcha failed" }, { status: 403 });
   }
 
+  // Forward the visitor IP so the api's per-IP limit is per visitor, not per web server.
+  const ip = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+  const internal = process.env.PLUMBERR_INTERNAL_TOKEN;
   const res = await fetch(`${API_URL}/break`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(internal && ip ? { "x-plumberr-internal": internal, "x-plumberr-client-ip": ip } : {}),
+    },
     body: JSON.stringify({ faultId: body.faultId }),
   });
   return NextResponse.json(await res.json(), { status: res.status });

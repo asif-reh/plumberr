@@ -18,6 +18,8 @@ export function createRunner(store: Store, bus: Bus, coord: Coord) {
   const history: ShopStats[] = [];
   let shopUp = false;
   let resetTimer: NodeJS.Timeout | null = null;
+  let resetAt: number | null = null;
+  const modelErrors = new Map<string, number>();
   const alerting = new Set<string>();
   const fixing = new Map<string, Promise<unknown>>();
 
@@ -117,10 +119,12 @@ export function createRunner(store: Store, bus: Bus, coord: Coord) {
       const d = await dispatchAgent(incident.id, buildPageMessage(incident.id, bundle));
       if (d.runId) await store.updateIncident(incident.id, { runId: d.runId });
       await emit({ incidentId: incident.id, kind: "info", text: d.dryRun ? "Dry run: no gateway" : `OpenClaw admitted run ${d.runId}`, data: { runId: d.runId } });
+      setTimeout(() => void failIncident(incident.id, `No fix within ${Math.round(env.investigateTimeoutMs / 1000)}s (model busy) — showing the replay instead; the shop auto-heals shortly.`), env.investigateTimeoutMs).unref();
       return { ok: true };
     } catch (err) {
       await store.updateIncident(incident.id, { status: "failed" });
       await emit({ incidentId: incident.id, kind: "error", text: `Alert handling failed: ${(err as Error).message}` });
+      scheduleHeal(incident.id, "failure");
       return { ok: false, error: (err as Error).message };
     } finally {
       alerting.delete(incident.id);
@@ -153,15 +157,42 @@ export function createRunner(store: Store, bus: Bus, coord: Coord) {
     return { status: 201, body: await store.getIncident(id) };
   }
 
-  function scheduleAutoReset(ms: number) {
+  function scheduleAutoReset(ms: number, reason = "auto-reset (10 min)") {
     if (resetTimer) clearTimeout(resetTimer);
-    resetTimer = setTimeout(() => void reset("auto-reset (10 min)"), Math.max(0, ms));
+    resetAt = Date.now() + Math.max(0, ms);
+    resetTimer = setTimeout(() => void reset(reason), Math.max(0, ms));
     resetTimer.unref();
+  }
+
+  /** Auto-heal soon after the incident ends (PR opened or failed); the 10-min cap stays as fallback. */
+  function scheduleHeal(id: string, why: string) {
+    if (resetAt !== null && resetAt - Date.now() <= env.autoResetAfterPrMs) return; // already sooner
+    scheduleAutoReset(env.autoResetAfterPrMs, `auto-heal ${Math.round(env.autoResetAfterPrMs / 1000)}s after ${why}`);
+    void emit({ incidentId: id, kind: "info", text: `Auto-heal: reverting the fault and freeing Break-it in ${Math.round(env.autoResetAfterPrMs / 1000)}s` });
+  }
+
+  async function failIncident(id: string, text: string) {
+    const cur = await store.getIncident(id);
+    if (!cur || cur.prUrl || cur.resolvedAt || cur.status === "failed") return;
+    await store.updateIncident(id, { status: "failed" });
+    await emit({ incidentId: id, kind: "error", text });
+    scheduleHeal(id, "failure");
+  }
+
+  /** Cerebras quota guard: count failed model calls per incident before a fix. */
+  async function noteModelCall(id: string, outcome: string) {
+    if (outcome === "completed") return;
+    const n = (modelErrors.get(id) ?? 0) + 1;
+    modelErrors.set(id, n);
+    if (n >= env.maxModelErrors) {
+      await failIncident(id, `Cerebras is rate-limiting right now (${n} failed model calls) — showing the replay instead; the shop auto-heals shortly.`);
+    }
   }
 
   async function reset(reason = "manual reset") {
     if (resetTimer) clearTimeout(resetTimer);
     resetTimer = null;
+    resetAt = null;
     await shop("/internal/reset", { method: "POST", timeoutMs: 60_000 }).catch(() => null);
     const active = await store.activeIncident();
     if (active) {
@@ -211,6 +242,7 @@ export function createRunner(store: Store, bus: Bus, coord: Coord) {
         text: `${pr.dryRun ? "PR prepared (dry run)" : "PR opened"}: ${req.title}`,
         data: { prUrl: pr.url, dryRun: pr.dryRun, branch: pr.branch, title: req.title, body, changes: req.changes.map((c) => ({ path: c.path, content: c.content.slice(0, 4000) })), grade },
       });
+      scheduleHeal(id, "the fix PR");
       return { prUrl: pr.url, dryRun: pr.dryRun, grade };
     })();
     fixing.set(id, p);
@@ -233,7 +265,8 @@ export function createRunner(store: Store, bus: Bus, coord: Coord) {
   }
 
   return {
-    emit, handleAlert, breakIt, reset, submitFix, recover,
+    emit, handleAlert, breakIt, reset, submitFix, recover, noteModelCall,
+    resetAt: () => resetAt,
     stats: () => ({ up: shopUp, current: history.at(-1) ?? null, history: history.slice(-90) }),
   };
 }

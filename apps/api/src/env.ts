@@ -16,6 +16,12 @@ export const env = {
   /** In-process runner (formerly apps/worker). */
   detectorIntervalMs: num(process.env.DETECTOR_INTERVAL_MS, 3000),
   autoResetMs: num(process.env.AUTO_RESET_MS, 10 * 60_000),
+  /** Auto-heal: revert the fault + release the lock this long after pr_opened / failed. */
+  autoResetAfterPrMs: num(process.env.AUTO_RESET_AFTER_PR_MS, 30_000),
+  /** Watchdog: an incident still investigating after this long is failed (+ auto-heal). */
+  investigateTimeoutMs: num(process.env.INVESTIGATE_TIMEOUT_MS, 150_000),
+  /** Cerebras quota guard: this many failed model calls before a fix → fail gracefully. */
+  maxModelErrors: num(process.env.MAX_MODEL_ERRORS, 8),
   loadgenRps: num(process.env.LOADGEN_RPS, 20),
   evidenceMaxBytes: num(process.env.EVIDENCE_MAX_BYTES, 8192),
   openclawUrl: process.env.OPENCLAW_URL || undefined,

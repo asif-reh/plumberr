@@ -28,8 +28,10 @@ const requireInternal = async (c: Context, next: Next) => {
   if (bearer(c) !== `Bearer ${env.internalToken}`) return c.json({ error: "unauthorized" }, 401);
   await next();
 };
+/** The web server proxies Break-it, so it forwards the visitor IP; trust that header only with the internal token. */
 const clientIp = (c: Context) =>
-  c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? getConnInfo(c).remote.address ?? "unknown";
+  (c.req.header("x-plumberr-internal") === env.internalToken ? c.req.header("x-plumberr-client-ip") : undefined) ??
+  c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? getConnInfo(c).remote.address ?? "unknown";
 
 const app = new Hono();
 app.use("*", logger());
@@ -55,10 +57,19 @@ app.post("/break", async (c) => {
   if (!getFault(parsed.data.faultId)) return c.json({ error: "unknown fault" }, 404);
   if (!owner) {
     const left = await coord.hit(`break:${clientIp(c)}`, env.breakRateLimit, env.breakRateWindowSec);
-    if (left < 0) return c.json({ error: "rate limited — try again later" }, 429);
+    if (left < 0)
+      return c.json({ error: `You've used your ${env.breakRateLimit} live breaks for this hour — enjoy the replay of the best run instead.`, code: "rate_limited", retryAfterSec: env.breakRateWindowSec }, 429);
   }
   const r = await runner.breakIt(parsed.data.faultId);
+  if (r.status === 409) return c.json({ ...(r.body as object), code: "locked", resetAt: runner.resetAt() }, 409);
   return c.json(r.body as object, r.status as 201);
+});
+
+/** Public lock status for the Break-it UI: who holds it and when it frees up. */
+app.get("/lock", async (c) => {
+  const active = await store.activeIncident();
+  const holder = await coord.holder();
+  return c.json({ locked: !!holder || !!active, holder, incident: active, resetAt: runner.resetAt(), now: Date.now(), breakEnabled: env.breakEnabled });
 });
 
 app.post("/reset", async (c) => {
@@ -128,6 +139,7 @@ internal.post("/agent-events", async (c) => {
         : `Blocked ${String(data.toolName)}: ${String(data.reason)}`;
   const kind = type === "model_call" ? "agent.model_call" : type === "tool_call" ? "agent.tool_call" : "agent.blocked";
   await emit({ incidentId: inc.id, kind, text, data: { ...data, runId, source: "agent" } });
+  if (type === "model_call" && !inc.prUrl) await runner.noteModelCall(inc.id, String(data.outcome));
   return c.json({ ok: true });
 });
 
