@@ -18,4 +18,5 @@ COPY apps/gateway/workspace ./workspace
 COPY --from=plugin /out/plumberr-tools.tgz /out/plumberr-hooks.tgz ./plugins/
 ENV OPENCLAW_GATEWAY_PORT=8080 OPENCLAW_STATE_DIR=/data/.openclaw OPENCLAW_WORKSPACE_DIR=/data/workspace
 EXPOSE 8080
+RUN chmod +x /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
