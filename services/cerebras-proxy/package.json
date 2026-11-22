@@ -1,0 +1,17 @@
+{
+  "name": "@plumberr/cerebras-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Metadata-only logging proxy in front of Cerebras: measures queue vs generation, checks reasoning replay, optionally forces reasoning_effort.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src"
+  },
+  "devDependencies": { "tsx": "^4.20.6" },
+  "files": ["dist"]
+}
