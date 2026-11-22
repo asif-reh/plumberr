@@ -1,0 +1,35 @@
+{
+  "name": "@plumberr/openclaw-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plumberr OpenClaw tool plugin: on-call SRE tools (logs, metrics, commits, files, RCA, PR, timeline).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "plugin:build": "pnpm build && openclaw plugins build --entry ./dist/index.js",
+    "plugin:validate": "pnpm build && openclaw plugins validate --entry ./dist/index.js"
+  },
+  "dependencies": {
+    "typebox": "^1.1.38"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "devDependencies": {
+    "openclaw": "^2026.11.6"
+  }
+}

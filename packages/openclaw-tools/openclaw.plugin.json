@@ -1,0 +1,35 @@
+{
+  "id": "plumberr-tools",
+  "name": "Plumberr On-call Tools",
+  "description": "Read-only observability + git tools and one write tool (submit_fix) for the Plumberr SRE agent.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "required": [
+      "apiBaseUrl",
+      "apiToken"
+    ],
+    "properties": {
+      "apiBaseUrl": {
+        "type": "string",
+        "description": "Plumberr api base URL (apps/api)."
+      },
+      "apiToken": {
+        "type": "string",
+        "description": "PLUMBERR_INTERNAL_TOKEN for /internal/* on the api."
+      }
+    }
+  },
+  "contracts": {
+    "tools": [
+      "get_logs",
+      "query_metrics",
+      "get_recent_commits",
+      "read_file",
+      "submit_fix"
+    ]
+  }
+}
