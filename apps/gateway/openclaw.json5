@@ -1,0 +1,100 @@
+// OpenClaw Gateway config for Plumberr — verified with `openclaw config validate` + `openclaw doctor --json`
+// on openclaw 2026.11.6 (local native run, 2026-11-21). ${VARS} are resolved from the process env.
+// scripts/setup-gateway.sh renders this into $OPENCLAW_STATE_DIR/openclaw.json.
+{
+  gateway: {
+    port: 18789, // Railway: set OPENCLAW_GATEWAY_PORT=8080 and pass --port
+    mode: "local",
+    bind: "loopback", // Railway: "lan" (private network), keep auth on
+    auth: { mode: "token", token: "${OPENCLAW_GATEWAY_TOKEN}" },
+  },
+  hooks: {
+    enabled: true,
+    token: "${OPENCLAW_HOOK_TOKEN}",
+    path: "/hooks",
+    allowedAgentIds: ["oncall"],
+    allowRequestSessionKey: false,
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      cerebras: {
+        // Local: the metadata-only logging proxy (services/cerebras-proxy, :4300) → https://api.cerebras.ai.
+        // OpenClaw trusts the exact configured origin, so a loopback baseUrl passes the SSRF guard.
+        baseUrl: "${OPENCLAW_CEREBRAS_BASE_URL}",
+        apiKey: "${CEREBRAS_API_KEY}",
+        api: "openai-completions",
+        timeoutSeconds: 300, // Cerebras queue_time can exceed 3 min under hackathon load
+        models: [
+          {
+            id: "moonshotai-kimi-k3.1-pro-trial", // confirmed via GET /v1/models
+            name: "Kimi K3.1 Pro (Cerebras)",
+            reasoning: true,
+            maxTokens: 4096, // keeps the rate-limit pre-charge low
+            contextWindow: 131072,
+            compat: {
+              supportsReasoningEffort: true,
+              supportedReasoningEfforts: ["low", "medium", "high", "max"],
+              maxTokensField: "max_completion_tokens",
+              supportsTools: true,
+            },
+          },
+        ],
+      },
+    },
+  },
+  agents: {
+    defaults: {
+      model: { primary: "cerebras/moonshotai-kimi-k3.1-pro-trial" },
+      thinkingDefault: "low", // → reasoning_effort=low
+      timeoutSeconds: 1500,
+      workspace: "${OPENCLAW_WORKSPACE_DIR}/oncall",
+    },
+    // NOTE: per-agent config lives under agents.entries (not agents.list) in 2026.11.x
+    entries: {
+      oncall: {
+        name: "Plumberr on-call",
+        workspace: "${OPENCLAW_WORKSPACE_DIR}/oncall",
+        model: "cerebras/moonshotai-kimi-k3.1-pro-trial",
+        thinkingDefault: "low",
+        tools: {
+          profile: "minimal",
+          alsoAllow: ["get_logs", "query_metrics", "get_recent_commits", "read_file", "submit_fix"],
+        },
+      },
+    },
+  },
+  tools: {
+    deny: ["exec", "process", "terminal", "code_execution"],
+    loopDetection: { enabled: true },
+    // Direct schemas: with Tool Search on, the model only sees tool_search/tool_describe/dispatch_action
+    // and has to guess submit_fix's schema (observed: postmortem.timeline sent as a string → retry turn).
+    toolSearch: false,
+  },
+  plugins: {
+    entries: {
+      cerebras: { enabled: true },
+      "plumberr-tools": {
+        enabled: true,
+        config: {
+          apiBaseUrl: "${PLUMBERR_API_URL}",
+          apiToken: "${PLUMBERR_INTERNAL_TOKEN}",
+        },
+      },
+      // Hook plugin: after_tool_call/model_call_ended → timeline; before_tool_call → hard 3-turn budget.
+      // Uses only metadata hooks, so no hooks.allowConversationAccess grant is needed.
+      "plumberr-hooks": {
+        enabled: true,
+        config: {
+          apiBaseUrl: "${PLUMBERR_API_URL}",
+          apiToken: "${PLUMBERR_INTERNAL_TOKEN}",
+          agentId: "oncall",
+          maxModelTurns: 3,
+        },
+      },
+    },
+  },
+  // Optional (needs `openclaw plugins install @openclaw/diagnostics-otel`):
+  // diagnostics: { enabled: true, otel: { enabled: true, endpoint: "${GRAFANA_OTLP_ENDPOINT}", protocol: "http/protobuf",
+  //   serviceName: "plumberr-gateway", traces: true, metrics: true, logs: true, headers: { Authorization: "Basic ${GRAFANA_OTLP_AUTH}" } } },
+}
