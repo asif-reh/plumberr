@@ -12,6 +12,11 @@ RUN pnpm install --frozen-lockfile \
 
 FROM node:24-slim
 RUN npm install -g openclaw@2026.11.6 --allow-scripts=openclaw
+# Small containers (Railway free tier) stall the event loop during GC; the hook admission window is a
+# hardcoded 15s in 2026.11.6, so widen it to 120s or the first page 503s before the run starts.
+RUN f=$(grep -l "HOOK_AGENT_START_ADMISSION_TIMEOUT_MS = 15e3" "$(npm root -g)"/openclaw/dist/hooks-*.mjs) \
+ && sed -i "s/HOOK_AGENT_START_ADMISSION_TIMEOUT_MS = 15e3/HOOK_AGENT_START_ADMISSION_TIMEOUT_MS = 12e4/" $f \
+ && grep -q "HOOK_AGENT_START_ADMISSION_TIMEOUT_MS = 12e4" $f
 WORKDIR /app
 COPY apps/gateway/openclaw.json5 apps/gateway/entrypoint.sh apps/gateway/render-config.mjs ./
 COPY apps/gateway/workspace ./workspace

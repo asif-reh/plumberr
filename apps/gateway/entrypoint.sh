@@ -20,4 +20,10 @@ openclaw config validate
 PUBLIC_PORT="${OPENCLAW_GATEWAY_PORT:-8080}"
 INNER_PORT=18789
 node -e 'const n=require("net");const[p,i]=process.argv.slice(1).map(Number);n.createServer(s=>{const t=Date.now();let up=0;const c=n.connect(i,"127.0.0.1",()=>console.log("[fwd] upstream connected"));console.log("[fwd] conn from "+s.remoteAddress);c.on("data",d=>{if(!up)console.log("[fwd] first response bytes after "+(Date.now()-t)+"ms: "+d.toString("latin1").split("\r\n")[0]);up+=d.length});s.pipe(c).pipe(s);s.on("close",()=>console.log("[fwd] client closed after "+(Date.now()-t)+"ms, upstream bytes "+up));s.on("error",e=>{console.log("[fwd] client "+e.code);c.destroy()});c.on("error",e=>{console.log("[fwd] upstream "+e.code);s.destroy()})}).listen(p,"::",()=>console.log("[fwd] [::]:"+p+" -> 127.0.0.1:"+i))' "$PUBLIC_PORT" "$INNER_PORT" &
+# Self-probe (diagnostics): listening sockets + local HTTP check, logged a few times after boot.
+( for n in $(seq 1 40); do sleep 15; node -e '
+const fs=require("fs");const L=[];for(const f of ["/proc/net/tcp","/proc/net/tcp6"]){try{for(const l of fs.readFileSync(f,"utf8").split("\n").slice(1)){const c=l.trim().split(/\s+/);if(c[3]==="0A"){const[h,p]=c[1].split(":");L.push(f.slice(-4)+" "+h+":"+parseInt(p,16))}}}catch{}}
+console.log("[probe] listen "+L.join(", "));const t=Date.now();
+fetch("http://127.0.0.1:18789/healthz",{signal:AbortSignal.timeout(10000)}).then(r=>console.log("[probe] healthz "+r.status+" "+(Date.now()-t)+"ms")).catch(e=>console.log("[probe] healthz ERR "+(e.cause?.code||e.name)+" "+(Date.now()-t)+"ms"));
+const rd=f=>{try{return fs.readFileSync(f,"utf8").trim().replace(/\n/g,",")}catch{return "?"}};const m="cgroup max="+rd("/sys/fs/cgroup/memory.max")+" cur="+rd("/sys/fs/cgroup/memory.current")+" peak="+rd("/sys/fs/cgroup/memory.peak")+" events="+rd("/sys/fs/cgroup/memory.events")+" cpu.max="+rd("/sys/fs/cgroup/cpu.max");console.log("[probe] "+m)'; done ) &
 exec env -u OPENCLAW_GATEWAY_PORT openclaw gateway --port "$INNER_PORT" --bind loopback

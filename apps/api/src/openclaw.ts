@@ -20,14 +20,17 @@ export async function dispatchAgent(incidentId: string, message: string): Promis
           deliver: false,
           timeoutSeconds: env.openclawTimeoutSeconds,
         }),
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(Number(process.env.OPENCLAW_DISPATCH_TIMEOUT_MS) || 20_000),
       });
       const text = await res.text();
       if (!res.ok) throw new Error(`OpenClaw /hooks/agent → ${res.status}: ${text.slice(0, 300)}`);
       const data = JSON.parse(text || "{}") as { runId?: string };
       return { runId: data.runId, dryRun: false };
     } catch (e) {
-      lastErr = e as Error;
+      const err = e as Error & { cause?: { code?: string; message?: string; address?: string; port?: number } };
+      const c = err.cause;
+      lastErr = new Error(`${err.message}${c ? ` (${c.code ?? ""} ${c.message ?? ""}${c.address ? ` ${c.address}:${c.port}` : ""})`.replace(/\s+\)/, ")") : ""} [attempt ${attempt}]`);
+      console.warn(`[api] openclaw dispatch attempt ${attempt} failed: ${lastErr.message}`);
       await new Promise((r) => setTimeout(r, 500 * attempt));
     }
   }

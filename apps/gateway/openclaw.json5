@@ -74,6 +74,8 @@
     toolSearch: false,
   },
   plugins: {
+    // Load only what Plumberr needs (cuts gateway RSS on Railway).
+    allow: ["cerebras", "plumberr-tools", "plumberr-hooks"],
     entries: {
       cerebras: { enabled: true },
       "plumberr-tools": {
