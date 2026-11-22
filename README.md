@@ -1,29 +1,31 @@
 # Plumberr 🔧
 
-**Plumberr fixes production leaks in seconds.**
+**Live demo: https://web-production-5ae86448.up.railway.app**
+
+[![Live demo](https://img.shields.io/badge/Live%20demo-Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white)](https://web-production-5ae86448.up.railway.app)
+
+Plumberr: an AI on-call engineer. Kimi K3.1 Pro on Cerebras, driven by OpenClaw, finds the root cause of production incidents and opens the fix PR in seconds. Live on Railway.
 
 The default public view is a **replay** of the best real stored incident. **Go live** pushes a real fault to a live shop API: a bad config push (F1), a dropped index on a 500k-row Postgres table (F2) or a feature flag that crashes on a null coupon (F4). An in-process detector catches the SLO breach in about 5–10 s. A deterministic **collector** then gathers an evidence bundle of 8 KB or less in milliseconds with zero model calls: the alert, metrics vs baseline, the 3 newest commits with diffs, deduped errors and the relevant files. The bundle goes straight into the page sent to an **OpenClaw agent running Kimi K3.1 Pro on Cerebras**. The agent is told to call **one tool, `submit_fix`**, in its first response; that call records the root cause and opens the fix PR with a postmortem. Every step streams to the dashboard, labelled *collector* or *agent*, alongside a measured split of model **queue vs generation** time.
 
 Why this shape: on the shared hackathon endpoint each model call waits in Cerebras' queue for 30–230 s, while generation takes under 4 s at ~300–600 tok/s. Fewer model turns is the only lever that matters, so evidence collection is not left to the model.
 
-Built for the Cerebras × Kimi K3.1 Pro hackathon (#KimiOnCerebras). The original design is in [PLAN.md](./PLAN.md), which still uses the old working name ClawOnCall and predates this design update.
+Built for the Cerebras × Kimi K3.1 Pro hackathon (#KimiOnCerebras). The product and startup plan is in [ROADMAP.md](./ROADMAP.md). The original design notes are in [PLAN.md](./PLAN.md), which still uses the old working name ClawOnCall and predates this design update.
+
+## Measured live results
+
+Recorded on the deployed Railway stack, with the correct root cause in both cases:
+
+- **F4 (broken feature flag):** alert to PR in **9.9 seconds**. Kimi traced the 500s to a null-coupon bug in `pricing.ts` that the new pricing flag exposed.
+- **F1 (bad payment timeout):** alert to PR in **34.2 seconds**. Kimi named the exact bad commit that changed the timeout from 2000ms to 50ms. Most of that time was Cerebras rate-limit retries.
 
 ## Architecture
 
-```
-apps/web (Next.js) ──/api/break──▶ apps/api (Hono, ONE service)                          services/demo-shop
-  replay (default) / live      │  • POST /break → Redis SET NX global lock → fault ─────▶  (Postgres shop_orders 500k rows,
-  ◀── SSE /incidents/:id/stream │  • loadgen loop (20 rps) ─────────────────────────────▶   simulated repo + git log)
-                               │  • detector (3 s) → collector → evidence bundle ≤8 KB ◀─ /internal/{stats,logs,commits,file}
-                               │  • POST /hooks/agent (Idempotency-Key) ──────────────▶ apps/gateway: OpenClaw 2026.11.6
-                               │  • auto-reset after 10 min (setTimeout)                    agent "oncall", toolSearch off
-                               │  • GitHub App creds live ONLY here (submit_fix → PR)       ├ plumberr-tools (5 tools → api /internal/*)
-                               ◀── /internal/* (PLUMBERR_INTERNAL_TOKEN) ───────────────────┤ plumberr-hooks (after_tool_call,
-                               ◀── /internal/llm-calls (queue/gen per call) ──┐              │   model_call_ended, before_tool_call budget)
-                                                                              │              ▼
-                                                  services/cerebras-proxy (:4300) ◀── provider baseUrl ── Cerebras
-                                                  metadata-only logs, FORCE_EFFORT, hard turn cap ──▶ api.cerebras.ai
-```
+![Plumberr architecture](docs/architecture.png)
+
+Hand-drawn source: [docs/architecture.excalidraw](docs/architecture.excalidraw) · [SVG](docs/architecture.svg)
+
+A visitor clicks **Break it** on the Next.js dashboard (Railway). The Hono API injects a real fault into the demo shop and Postgres, holds a Redis lock and rate limit, and watches error rate and latency. When an alert fires, the API pages the OpenClaw gateway with a compact evidence bundle. OpenClaw runs Kimi K3.1 Pro on Cerebras; the agent can call tools (logs, metrics, `read_file`, commit diffs, `submit_fix`) back through the API. `submit_fix` records the root cause and opens a fix PR on GitHub. Every step streams to the dashboard over SSE.
 
 | Path | What it is |
 |---|---|
@@ -86,29 +88,33 @@ Each fault records a "chaos-bot" commit with a real unified diff in the shop's s
 
 ## Deploy
 
-Nothing in this repo has been deployed yet.
+The product is live on Railway: [https://web-production-5ae86448.up.railway.app](https://web-production-5ae86448.up.railway.app).
 
-### Railway (api, demo-shop, cerebras-proxy, gateway, Postgres, Redis)
+### Railway (web, api, demo-shop, cerebras-proxy, gateway, Postgres, Redis)
+
 1. Create the Railway project `plumberr` and add the **Postgres** and **Redis** plugins.
-2. Add five services from this repo and set each one's config file path:
+2. Add services from this repo and set each one's config file path:
+   - `plumberr-web` uses `apps/web` (Dockerfile / Railway config). This is the public dashboard.
    - `plumberr-api` uses `apps/api/railway.json` (Dockerfile, health check `/health`)
    - `plumberr-proxy` uses `services/cerebras-proxy/railway.json` (set `CEREBRAS_PROXY_HOST=0.0.0.0`; point the gateway's `OPENCLAW_CEREBRAS_BASE_URL` at it, or at `https://api.cerebras.ai/v1` to bypass)
    - `plumberr-shop` uses `services/demo-shop/railway.json`
    - `plumberr-gateway` uses `apps/gateway/railway.json`, with a **volume at `/data`** and `OPENCLAW_GATEWAY_PORT=8080`
 3. Set the variables listed in `.env.example`. Use Railway references for `DATABASE_URL` and `REDIS_URL`, and private URLs for the internal ones (for example `SHOP_URL=http://plumberr-shop.railway.internal:4100`, `OPENCLAW_URL=http://plumberr-gateway.railway.internal:8080`, `API_URL`/`PLUMBERR_API_URL=http://plumberr-api.railway.internal:4000`).
-4. Give only `plumberr-api` a public domain. Set `WEB_ORIGIN` to the Vercel URL.
-
-### Vercel (web)
-1. Import the repo and set **Root Directory** to `apps/web`. `vercel.json` already sets the monorepo install and build commands.
-2. Env: `NEXT_PUBLIC_API_URL=https://<plumberr-api domain>`, and optionally `TURNSTILE_SECRET_KEY` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
+4. Give the web service a public domain. If the browser talks to the api directly, give `plumberr-api` a public domain too and set `NEXT_PUBLIC_API_URL` to it. Set `WEB_ORIGIN` to the public web URL.
 
 ### Custom `.me` domain (later)
-Point `plumberr.me` (or whichever name you pick) at Vercel by adding the domain in Vercel and setting the A/CNAME records it gives you. Point `api.plumberr.me` at Railway as a custom domain on `plumberr-api` with a CNAME. Then update `WEB_ORIGIN` and `NEXT_PUBLIC_API_URL`.
+
+Point `plumberr.me` (or whichever name you pick) at the Railway web service as a custom domain, and set the DNS records Railway gives you. Then update `WEB_ORIGIN` and `NEXT_PUBLIC_API_URL`.
 
 ## CI
 `.github/workflows/ci.yml` runs pnpm install, lint, typecheck and build, then checks the tool plugin metadata is current, validates it, and sanity-checks the hook plugin manifest.
 
+## Roadmap
+
+See [ROADMAP.md](./ROADMAP.md) for the product and startup plan: finishing the core, plugging into existing tooling, getting smarter over time, trust and safety, the business, and the next 30 days.
+
 ## Status
+- ✅ **Live on Railway:** the public dashboard, api, demo shop, gateway, Postgres and Redis. Real live runs have completed on the deployed stack (see [Measured live results](#measured-live-results)).
 - ✅ **Real and run locally end to end:** api runner (lock, detector, collector, dispatch, auto-reset, loadgen); OpenClaw gateway with both plugins loaded and hooks registered (`after_tool_call`, `before_tool_call`, `model_call_ended`); cerebras-proxy in the provider path; `submit_fix` with grading; replay mode; F2 on real Postgres.
 - 🟡 **Implemented but not exercised:** the GitHub App PR path in `apps/api/src/github.ts` (JWT → installation token → branch → contents → PR). There are no App creds on the dev box, so PRs are dry-run previews; the full content is stored on the timeline and shown in the UI.
 - 🟡 **Not wired:** Grafana (intentionally out of the critical path), Upstash, Sentry.
