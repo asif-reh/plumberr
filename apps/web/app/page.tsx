@@ -27,7 +27,7 @@ export default function Home() {
       ) : (
         <>
           <MetricsPanel />
-          <BreakPanel />
+          <BreakPanel onReplay={() => setMode("replay")} />
         </>
       )}
     </div>
