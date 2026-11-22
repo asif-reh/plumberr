@@ -15,4 +15,9 @@ openclaw plugins install --force --accept-capabilities /app/plugins/plumberr-hoo
 # Render config (JSON5 → JSON; ${VARS} stay literal and are resolved by OpenClaw at runtime)
 node /app/render-config.mjs /app/openclaw.json5 "$OPENCLAW_STATE_DIR/openclaw.json"
 openclaw config validate
-exec openclaw gateway --port "${OPENCLAW_GATEWAY_PORT:-8080}" --bind lan
+# Railway private networking is IPv6; OpenClaw "lan" binds IPv4 only. Run the gateway on loopback and
+# expose it on [::]:$PUBLIC_PORT through a tiny dual-stack TCP forwarder.
+PUBLIC_PORT="${OPENCLAW_GATEWAY_PORT:-8080}"
+INNER_PORT=18789
+node -e 'const n=require("net");const[p,i]=process.argv.slice(1).map(Number);n.createServer(s=>{const t=Date.now();let up=0;const c=n.connect(i,"127.0.0.1",()=>console.log("[fwd] upstream connected"));console.log("[fwd] conn from "+s.remoteAddress);c.on("data",d=>{if(!up)console.log("[fwd] first response bytes after "+(Date.now()-t)+"ms: "+d.toString("latin1").split("\r\n")[0]);up+=d.length});s.pipe(c).pipe(s);s.on("close",()=>console.log("[fwd] client closed after "+(Date.now()-t)+"ms, upstream bytes "+up));s.on("error",e=>{console.log("[fwd] client "+e.code);c.destroy()});c.on("error",e=>{console.log("[fwd] upstream "+e.code);s.destroy()})}).listen(p,"::",()=>console.log("[fwd] [::]:"+p+" -> 127.0.0.1:"+i))' "$PUBLIC_PORT" "$INNER_PORT" &
+exec env -u OPENCLAW_GATEWAY_PORT openclaw gateway --port "$INNER_PORT" --bind loopback

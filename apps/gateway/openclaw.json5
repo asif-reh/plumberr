@@ -44,7 +44,9 @@
     },
   },
   agents: {
+    ownership: "explicit", // required by the Railway-built gateway validator
     defaults: {
+      systemAgent: { agentId: "oncall" },
       model: { primary: "cerebras/moonshotai-kimi-k3.1-pro-trial" },
       thinkingDefault: "low", // → reasoning_effort=low
       timeoutSeconds: 1500,
